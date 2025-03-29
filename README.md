@@ -1,0 +1,1 @@
+# goldiamond1031.github.io
