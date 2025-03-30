@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DeepSeek 兼容版</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            line-height: 1.5;
+        }
+        .container {
+            border: 1px solid #ddd;
+            padding: 20px;
+            border-radius: 5px;
+        }
+        h1 {
+            color: #1a73e8;
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        textarea, input {
+            width: 100%;
+            padding: 8px;
+            margin-bottom: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        button {
+            background: #1a73e8;
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .message {
+            margin: 10px 0;
+            padding: 10px;
+            border-radius: 4px;
+        }
+        .user {
+            background: #f0f7ff;
+            border-left: 3px solid #1a73e8;
+        }
+        .assistant {
+            background: #f5f5f5;
+            border-left: 3px solid #666;
+        }
+        .controls {
+            margin: 15px 0;
+        }
+        label {
+            margin-right: 15px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>DeepSeek 兼容版</h1>
+        
+        <div>
+            <label for="apiKey">API Key:</label>
+            <input type="password" id="apiKey" placeholder="输入API Key将自动保存">
+        </div>
+        
+        <div class="controls">
+            <label>
+                <input type="checkbox" id="webSearch" checked> 启用联网搜索
+            </label>
+            <button onclick="clearHistory()">清空对话</button>
+        </div>
+        
+        <div id="chatArea" style="height: 300px; overflow-y: scroll; border: 1px solid #eee; padding: 10px; margin-bottom: 10px;">
+            <!-- 对话内容将显示在这里 -->
+        </div>
+        
+        <textarea id="userInput" rows="3" placeholder="输入您的问题..."></textarea>
+        
+        <button onclick="sendMessage()" style="width: 100%;">发送</button>
+    </div>
+
+    <script>
+        // 兼容localStorage的封装
+        var storage = {
+            get: function(key) {
+                return localStorage.getItem(key);
+            },
+            set: function(key, value) {
+                localStorage.setItem(key, value);
+            },
+            remove: function(key) {
+                localStorage.removeItem(key);
+            }
+        };
+
+        // 加载保存的API Key
+        window.onload = function() {
+            var savedKey = storage.get('deepseek_apiKey');
+            if (savedKey) {
+                document.getElementById('apiKey').value = savedKey;
+            }
+            
+            // 加载对话历史
+            var history = storage.get('deepseek_history');
+            if (history) {
+                document.getElementById('chatArea').innerHTML = history;
+                scrollToBottom();
+            }
+        };
+
+        // 发送消息函数
+        function sendMessage() {
+            var apiKey = document.getElementById('apiKey').value;
+            var userInput = document.getElementById('userInput').value;
+            var webSearch = document.getElementById('webSearch').checked;
+            
+            if (!apiKey) {
+                alert('请先输入API Key');
+                return;
+            }
+            
+            if (!userInput.trim()) {
+                alert('请输入问题内容');
+                return;
+            }
+            
+            // 保存API Key
+            storage.set('deepseek_apiKey', apiKey);
+            
+            // 显示用户消息
+            addMessage('user', userInput);
+            document.getElementById('userInput').value = '';
+            
+            // 显示"正在思考"提示
+            var thinkingMsg = addMessage('assistant', '正在思考...', true);
+            
+            // 构建对话历史
+            var messages = getConversationHistory();
+            messages.push({role: "user", content: userInput});
+            
+            // 如果启用联网搜索，添加系统提示
+            if (webSearch) {
+                messages.unshift({
+                    role: "system",
+                    content: "当前日期: " + new Date().toLocaleDateString() + 
+                            " - 请使用联网搜索获取最新信息"
+                });
+            }
+            
+            // 调用API (使用兼容的XMLHttpRequest)
+            var xhr = new XMLHttpRequest();
+            xhr.open('POST', 'https://api.deepseek.com/v1/chat/completions', true);
+            xhr.setRequestHeader('Content-Type', 'application/json');
+            xhr.setRequestHeader('Authorization', 'Bearer ' + apiKey);
+            
+            xhr.onreadystatechange = function() {
+                if (xhr.readyState === 4) {
+                    // 移除"正在思考"提示
+                    document.getElementById('chatArea').removeChild(thinkingMsg);
+                    
+                    if (xhr.status === 200) {
+                        var response = JSON.parse(xhr.responseText);
+                        var answer = response.choices[0].message.content;
+                        
+                        // 添加AI回复到对话
+                        addMessage('assistant', answer);
+                        
+                        // 保存完整对话历史
+                        saveConversationHistory();
+                    } else {
+                        var error = '请求失败: ';
+                        try {
+                            var errData = JSON.parse(xhr.responseText);
+                            error += errData.error ? errData.error.message : xhr.statusText;
+                        } catch(e) {
+                            error += xhr.statusText;
+                        }
+                        addMessage('assistant', error);
+                    }
+                }
+            };
+            
+            xhr.send(JSON.stringify({
+                model: "deepseek-chat",
+                messages: messages,
+                temperature: 0.7
+            }));
+        }
+        
+        // 添加消息到对话区域
+        function addMessage(role, content, isTemp) {
+            var chatArea = document.getElementById('chatArea');
+            var msgDiv = document.createElement('div');
+            msgDiv.className = 'message ' + role;
+            msgDiv.innerHTML = content.replace(/\n/g, '<br>');
+            
+            if (isTemp) {
+                msgDiv.id = 'tempMsg';
+                chatArea.appendChild(msgDiv);
+                scrollToBottom();
+                return msgDiv;
+            } else {
+                var tempMsg = document.getElementById('tempMsg');
+                if (tempMsg) {
+                    chatArea.replaceChild(msgDiv, tempMsg);
+                } else {
+                    chatArea.appendChild(msgDiv);
+                }
+                scrollToBottom();
+                return msgDiv;
+            }
+        }
+        
+        // 获取对话历史
+        function getConversationHistory() {
+            var messages = [];
+            var chatArea = document.getElementById('chatArea');
+            var messagesDom = chatArea.getElementsByClassName('message');
+            
+            for (var i = 0; i < messagesDom.length; i++) {
+                var msg = messagesDom[i];
+                if (msg.id === 'tempMsg') continue;
+                
+                var role = msg.className.indexOf('user') > -1 ? 'user' : 'assistant';
+                var content = msg.textContent || msg.innerText;
+                
+                messages.push({
+                    role: role,
+                    content: content
+                });
+            }
+            
+            return messages;
+        }
+        
+        // 保存对话历史到本地存储
+        function saveConversationHistory() {
+            var chatArea = document.getElementById('chatArea');
+            storage.set('deepseek_history', chatArea.innerHTML);
+        }
+        
+        // 清空对话历史
+        function clearHistory() {
+            if (confirm('确定要清空对话历史吗？')) {
+                document.getElementById('chatArea').innerHTML = '';
+                storage.remove('deepseek_history');
+            }
+        }
+        
+        // 滚动到底部
+        function scrollToBottom() {
+            var chatArea = document.getElementById('chatArea');
+            chatArea.scrollTop = chatArea.scrollHeight;
+        }
+    </script>
+</body>
+</html>
